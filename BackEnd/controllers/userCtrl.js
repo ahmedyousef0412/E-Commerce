@@ -1,155 +1,226 @@
 const {
-    User,
-    validateLogin,
-    validateUser,
-    handleError,
+  User,
+  validateLogin,
+  validateUser,
 } = require("../models/userModel");
+const { ValidationErrors } = require("../utilities/handleValidation")
 const _ = require("lodash");
 const asyncHandler = require("express-async-handler");
 const { genrateToken } = require("../config/generateToken");
-const { authMidd } = require("../middlewares/auth");
+const { userNotFound } = require("../utilities/handleUserNotFound")
+const { generateRefreshToken } = require("../config/refreshToken")
+const jwt = require("jsonwebtoken");
+const {tokenExpiredError} = require('../Errors/TokenErrors')
+
+
 
 const createUser = asyncHandler(async (req, res) => {
-    try {
-        const { error } = validateUser(req.body);
-        handleError(error, res);
 
-        const existingUser = await User.findOne({ email: req.body.email });
-        if (existingUser) {
-            return res
-                .status(400)
-                .json({
-                    message: "A user with this email already exists",
-                    success: false,
-                });
-        }
+  const { error } = validateUser(req.body);
+  ValidationErrors(error, res);
 
-        const newUser = new User(
-            _.pick(req.body, ["firstName", "lastName", "mobile", "email", "password"])
-        );
+  const existingUser = await User.findOne({ email: req.body.email });
+  if (existingUser) {
+    return res.status(400).json({
+      message: "A user with this email already exists",
+      success: false,
+    });
+  }
 
-        await newUser.save();
+  const newUser = new User(
+    _.pick(req.body, ["firstName", "lastName", "address", "mobile", "email", "password"])
+  );
 
-        const token = genrateToken(newUser?._id, newUser?.role);
+  await newUser.save();
 
-        res.header('x-auth-token', token); // Set header before sending data
+  const token = genrateToken(newUser?._id, newUser?.role);
 
-        // Now you can send the response body using various methods:
-        res.json({ token, user: _.pick(newUser, ['_id', 'role']) });
+  // res.header("Authorization", `Bearer ${token}`);
+  // res.header("x-auth-token", token); // Set header before sending data
 
-    } catch (err) {
-        res.status(500).json({ message: "Something went wrong" });
-    }
+  // Now you can send the response body using various methods:
+  res.json({ token, user: _.pick(newUser, ["_id", "role"]) });
+
 });
+
+// const loginUser = asyncHandler(async (req, res) => {
+
+//   const { error } = validateLogin(req.body);
+//   ValidationErrors(error, res);
+
+//   const { email, password } = req.body;
+
+//   const user = await User.findOne({ email });
+
+//   if (!user || !(await user.isPasswordMatched(password))) {
+//     return res.status(400).json({ message: "Invalid email or password" });
+//   }
+//   else {
+//     res.json({ token: genrateToken(user?._id, user?.role) });
+//   }
+
+// });
+
+
+
 
 const loginUser = asyncHandler(async (req, res) => {
+  const { error } = validateLogin(req.body);
+  ValidationErrors(error, res);
 
-    try {
-        const { error } = validateLogin(req.body);
-        handleError(error, res);
+  const { email, password } = req.body;
 
-        const { email, password } = req.body;
+  const user = await User.findOne({ email });
 
-        const user = await User.findOne({ email });
+  if (!user || !(await user.isPasswordMatched(password))) {
+    return res.status(400).json({ message: "Invalid email or password" });
+  } 
+  else {
 
-        if (!user || !(await user.isPasswordMatched(password))) {
-            return res.status(400).json({ message: "Invalid email or password" });
-        }
-        else {
-            res.json({
-                token: genrateToken(user?._id, user?.role)
-            })
-        }
-    }
-    catch (err) {
+    const accessToken = genrateToken(user?._id, user?.role);
+    const refreshToken = generateRefreshToken(user?._id,user?.role);
+    // res.cookie("refreshToken", refreshToken, {
+    //   httpOnly: true,
+    //   maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days (in milliseconds)
 
-        res.status(500).json({ message: "Something went wrong" });
-    }
+    // });
+   await User.findByIdAndUpdate(
+      user._id,
+      {
+        refreshToken: refreshToken,
+      },
+      { new: true }
+    );
 
+
+    res.json({ accessToken,refreshToken });
+  }
 });
+
+// const handleRefreshToken = async (req, res) => {
+//   const { token } = req.body;
+
+//   if (!token) {
+//     return res.status(400).json({ message: 'Refresh token is required' });
+//   }
+
+//   try {
+//     const user = await User.findOne({ refreshToken: token });
+//     if (!user) {
+//       return res.status(400).json({ message: 'No refresh token present in db or not matched' });
+//     }
+
+//     jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+//       if (err) {
+//         if (err.name === tokenExpiredError) {
+//           // Token has expired, generate new access token and refresh token
+//           const newAccessToken = genrateToken(user._id, user.role);
+//           const newRefreshToken = generateRefreshToken(user._id, user.role);
+//           user.refreshToken = newRefreshToken; // Update user's refresh token in database
+//           user.save(); // Save user changes
+//           return res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
+//         }
+        
+       
+//         return res.status(400).json({ message: 'Invalid refresh token' });
+//       }
+
+//       // Token verification successful, return current access token
+//       const accessToken = genrateToken(user._id, user.role);
+//       res.json({ accessToken });
+//     });
+//   } catch (error) {
+//     console.error('Error handling refresh token:', error);
+//     res.status(500).json({ message: 'Something went wrong' });
+//   }
+// };
+
+
+
+
 
 
 const getAllUser = async (req, res) => {
-    try {
-        // const users = await User.countDocuments(); //Get Count of Users
 
-        const users = await User.find();
-        res.json(users);
-    } catch (err) {
-        res.status(500).json({ message: err });
-    }
+  // const users = await User.countDocuments(); //Get Count of Users
+  const users = await User.find();
+  res.json(users);
+
 };
 
-const getUser = async (req, res) => {
-    try {
+const getUser = asyncHandler(async (req, res) => {
 
+  const user = await User.findById(req.params.id);
 
-        const user = await User.findById(req.params.id);
+  if (!user) return userNotFound(res);
 
-        if (!user) {
-            res.status(404).send(`No User found by id: ${req.params.id}`);
-        }
-        res.json(user);
+  res.json(user);
 
-    }
-    catch (err) {
-        res.status(500).json({ message: "Something went wrong" });
-    }
-};
-
+});
 
 const updateUser = async (req, res) => {
 
+  const { error } = validateUser(req.body);
 
-    try {
-        const { error } = validateUser(req.body);
+  ValidationErrors(error, res);
 
-        handleError(error, res);
+  const { firstName, lastName, address, email, password, mobile } = req.body;
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    {
+      firstName,
+      lastName,
+      address,
+      email,
+      password,
+      mobile,
 
-        const { firstName, lastName, email, password, mobile } = req.body;
-        const user = await User.findByIdAndUpdate(req.params.id, {
+    },
+    { new: true }
+  );
 
-            firstName,
-            lastName,
-            email,
-            password,
-            mobile,
-        }, { new: true });
+  if (!user) return userNotFound(res);
+
+  res.status(200).json({ message: "User updated successfully " });
+
+};
+
+const deleteUser = async (req, res) => {
+
+  const user = await User.findByIdAndDelete(req.params.id);
+
+  if (!user) return userNotFound(res);
 
 
-        if (!user) return res.status(404).send({ message: 'User not found' });
-
-        res.send(user);
-    }
-
-    catch (err) {
-        res.status(500).json({ message: "Something went wrong" });
-    }
+  res.status(200).json({ message: "User deleted successfully" });
 
 };
 
 
-const deleteUser = async (req, res) => {
-    try {
-        const user = await User.findByIdAndDelete(req.params.id);
+const toggleBlock = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return userNotFound(res);
 
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
 
-        res.status(200).json({ message: 'User deleted successfully' });
-    } catch (error) {
+    user.isBlocked = !user.isBlocked;
+    await user.save();
 
-        res.status(500).json({ message: 'Something went wrong' });
-    }
+
+    return res.json({ message: user.isBlocked ? "User is blocked" : "User is unblocked" });
+
+  } catch (error) {
+    res.status(500).json({ message: "Something went wrong" });
+  }
 };
 
 
 module.exports = {
-    createUser,
-    loginUser,
-    getAllUser: [authMidd, getAllUser]
-    , getUser: [authMidd, getUser]
-    , updateUser: [authMidd, updateUser]
-    , deleteUser: [authMidd, deleteUser]
+  createUser,
+  loginUser,
+  getAllUser,
+  getUser,
+  updateUser,
+  deleteUser,
+  toggleBlock,
 };
